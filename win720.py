@@ -3,9 +3,7 @@ import datetime
 import base64
 import requests
 
-from enum import Enum
 from bs4 import BeautifulSoup as BS
-from datetime import timedelta
 from Crypto.Cipher import AES
 from Crypto.Protocol.KDF import PBKDF2
 from Crypto.Hash import SHA256
@@ -18,7 +16,6 @@ import common
 import re
 
 import logging
-import time
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +52,10 @@ class Win720:
         self.http_client = HttpClientSingleton.get_instance()
 
     def buy_Win720(
-        self, 
+        self,
         auth_ctrl: auth.AuthController,
         username: str
     ) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-
         jsessionid = auth_ctrl.get_current_session_id()
         
         self.keyCode = jsessionid
@@ -81,22 +76,20 @@ class Win720:
         try:
            extracted_num = json.loads(parsed_ret).get("selLotNo", "")
         except ValueError:
-             raise ValueError(f"Failed to parse decrypted parsed_ret: {repr(parsed_ret)[:500]}... (Key: {self.keyCode[:5]}...{self.keyCode[-5:] if len(self.keyCode)>5 else ''})")
+             raise ValueError(f"Failed to parse decrypted response: {repr(parsed_ret)[:200]}...")
 
         if not extracted_num:
              return json.loads(parsed_ret)
 
         orderNo, orderDate = self._doOrderRequest(auth_ctrl, win720_round, extracted_num)
-        
+
         body = json.loads(self._doConnPro(auth_ctrl, win720_round, extracted_num, username, orderNo, orderDate))
 
-        self._show_result(body)
         body['round'] = win720_round
         return body
 
     def _generate_req_headers(self, auth_ctrl: auth.AuthController) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-        return auth_ctrl.add_auth_cred_to_headers(self._REQ_HEADERS)
+        return dict(self._REQ_HEADERS)
     
 
     def _get_round(self) -> str:
@@ -133,23 +126,12 @@ class Win720:
             "q": requests.utils.quote(self._encText(payload))
         }
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                res = self.http_client.post(
-                    url="https://el.dhlottery.co.kr/makeAutoNo.do", 
-                    headers=headers,
-                    data=data
-                )
-                res.raise_for_status()
-                break
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"[Retry] makeAutoNo connection failed ({attempt+1}/{max_retries}): {e}. Retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    logger.error(f"[Error] makeAutoNo connection failed after {max_retries} attempts: {e}")
-                    raise
+        res = self.http_client.post(
+            url="https://el.dhlottery.co.kr/makeAutoNo.do",
+            headers=headers,
+            data=data,
+            retries=5
+        )
 
         return res.text
 
@@ -161,23 +143,12 @@ class Win720:
             "q": requests.utils.quote(self._encText(payload))
         }
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                res = self.http_client.post(
-                    url="https://el.dhlottery.co.kr/makeOrderNo.do", 
-                    headers=headers,
-                    data=data
-                )
-                res.raise_for_status()
-                break
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"[Retry] makeOrderNo connection failed ({attempt+1}/{max_retries}): {e}. Retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    logger.error(f"[Error] makeOrderNo connection failed after {max_retries} attempts: {e}")
-                    raise
+        res = self.http_client.post(
+            url="https://el.dhlottery.co.kr/makeOrderNo.do",
+            headers=headers,
+            data=data,
+            retries=5
+        )
 
         try:
             ret = json.loads(self._decText(json.loads(res.text)['q']))
@@ -193,23 +164,12 @@ class Win720:
             "q": requests.utils.quote(self._encText(payload))
         }
         
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                res = self.http_client.post(
-                    url="https://el.dhlottery.co.kr/connPro.do", 
-                    headers=headers,
-                    data=data
-                )
-                res.raise_for_status()
-                break
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"[Retry] connPro connection failed ({attempt+1}/{max_retries}): {e}. Retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    logger.error(f"[Error] connPro connection failed after {max_retries} attempts: {e}")
-                    raise
+        res = self.http_client.post(
+            url="https://el.dhlottery.co.kr/connPro.do",
+            headers=headers,
+            data=data,
+            retries=5
+        )
 
         try:
             ret = self._decText(json.loads(res.text)['q'])
@@ -251,168 +211,84 @@ class Win720:
 
 
 
+    # 등수별 맞은 자릿수 (뒤에서부터 하이라이트). 1등은 조까지 일치.
+    _RANK_HIGHLIGHT_COUNT = {1: 6, 2: 6, 3: 5, 4: 4, 5: 3, 6: 2, 7: 1}
+
     def check_winning(self, auth_ctrl: auth.AuthController) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-
         headers = self._generate_req_headers(auth_ctrl)
-
         parameters = common.get_search_date_range()
-        data = {
-            "nowPage": 1, 
-            "searchStartDate": parameters["searchStartDate"],
-            "searchEndDate": parameters["searchEndDate"],
-            "winGrade": 1,
-            "lottoId": "LP72", 
-            "sortOrder": "DESC"
-        }
-
-        result_data = {
-            "data": "no winning data"
-        }
+        no_result = {"data": "no winning data"}
 
         try:
-            api_url = "https://www.dhlottery.co.kr/mypage/selectMyLotteryledger.do"
-            params = {
-                "srchStrDt": parameters["searchStartDate"],
-                "srchEndDt": parameters["searchEndDate"],
-                "ltGdsCd": "LP72",
-                "pageNum": 1,
-                "recordCountPerPage": 10
-            }
-            
-            res = self.http_client.get(api_url, params=params, headers=headers)
-            
-            if res.status_code == 200:
-                try:
-                    data = res.json()
-                    data = data.get("data", {})
-                    
-                    if data.get("list"):
-                        item = data["list"][0]
-                        
-                        purchased_date = item.get("eltOrdrDt", "-")
-                        round_no = item.get("ltEpsdView", "")
-                        money_raw = item.get("ltWnAmt", "0")
-                        if money_raw is None:
-                            money_raw = "0"
-                        
-                        if "회" in round_no:
-                            round_no = round_no.replace("회", "")
-                        
-                        try:
-                            val = int(money_raw)
-                            money = f"{val:,} 원"
-                        except (ValueError, TypeError):
-                            money = "0 원"
-                            
-                        result_data = {
-                            "round": round_no,
-                            "money": money,
-                            "purchased_date": purchased_date,
-                            "winning_date": item.get("epsdRflDt", "-"),
-                            "win720_details": []
-                        }
-                        
-                        try:
-                            detail_url = "https://www.dhlottery.co.kr/mypage/lottery720select.do"
-                            detail_params = {
-                                "ntslOrdrNo": item.get("ntslOrdrNo")
-                            }
-                            
-                            res_detail = self.http_client.get(detail_url, params=detail_params, headers=headers)
-                            detail_data = res_detail.json()
-                            
-                            detail_data = detail_data.get("data", detail_data)
-                            
-                            win720_details = []
-                            
-                            if "list" in detail_data:
-                                for i, d_item in enumerate(detail_data["list"]):
-                                    label = common.SLOTS[i] if i < len(common.SLOTS) else "?"
-                                    
-                                    info_cn = d_item.get("ltGmInfoCn", "")
-                                    
-                                    rank = d_item.get("wnRnk")
-                                    if rank is None:
-                                        rank = 0
-                                    else:
-                                        try:
-                                            rank = int(rank)
-                                        except (ValueError, TypeError):
-                                            rank = 0
-                                            
-                                    status = "0등" if rank == 0 else f"{rank}등"
-                                    
-                                    if ":" in info_cn:
-                                        parts = info_cn.split(":")
-                                        group = parts[0]
-                                        number_str = parts[1]
-                                        
-                                        hl_count = 0 
-                                        hl_group = False
-                                        
-                                        if rank == 1:
-                                            hl_count = 6
-                                            hl_group = True
-                                        elif rank == 2:
-                                            hl_count = 6
-                                        elif rank == 3:
-                                            hl_count = 5
-                                        elif rank == 4:
-                                            hl_count = 4
-                                        elif rank == 5:
-                                            hl_count = 3
-                                        elif rank == 6:
-                                            hl_count = 2
-                                        elif rank == 7:
-                                            hl_count = 1
-                                        
-                                        formatted_chars = []
-                                        digits = list(number_str)
-                                        L = len(digits)
-                                        
-                                        for idx, digit in enumerate(digits):
-                                            if idx >= (L - hl_count):
-                                                formatted_chars.append(f"[{digit}]")
-                                            else:
-                                                formatted_chars.append(f" {digit} ")
-                                        
-                                        formatted_num = " ".join(formatted_chars)
-                                        
-                                        label = f"{group}조"
-                                        
-                                        result_str = formatted_num
-                                    else:
-                                        label = "?"
-                                        result_str = info_cn
-                                    
-                                    
-                                    win720_details.append({
-                                        "label": label,
-                                        "result": result_str,
-                                        "status": status
-                                    })
-                                    
-                            result_data["win720_details"] = win720_details
+            res = self.http_client.get(
+                "https://www.dhlottery.co.kr/mypage/selectMyLotteryledger.do",
+                params={
+                    "srchStrDt": parameters["searchStartDate"],
+                    "srchEndDt": parameters["searchEndDate"],
+                    "ltGdsCd": "LP72",
+                    "pageNum": 1,
+                    "recordCountPerPage": 10
+                },
+                headers=headers
+            )
+            data = res.json().get("data", {})
+            if not data.get("list"):
+                return no_result
 
-                        except Exception as e:
-                            logger.error(f"[Error] Win720 detail error: {e}")
-                            
-                except Exception as e:
-                     logger.error(f"[Error] Win720 list process error: {e}")
-            
+            item = data["list"][0]
+            result_data = self._parse_ledger_item(item)
+            result_data["win720_details"] = self._fetch_details(item.get("ntslOrdrNo"), headers)
+            return result_data
         except Exception as e:
             logger.error(f"[Error] Win720 check error: {e}")
+            return no_result
 
-        return result_data
-    
+    def _parse_ledger_item(self, item: dict) -> dict:
+        round_no = (item.get("ltEpsdView") or "").replace("회", "")
 
-    def _show_result(self, body: dict) -> None:
-        assert isinstance(body, dict)
+        try:
+            money = f"{int(item.get('ltWnAmt') or 0):,} 원"
+        except (ValueError, TypeError):
+            money = "0 원"
 
-        if body.get("loginYn") != "Y":
-            return
+        return {
+            "round": round_no,
+            "money": money,
+            "purchased_date": item.get("eltOrdrDt", "-"),
+            "winning_date": item.get("epsdRflDt", "-"),
+            "win720_details": []
+        }
 
-        result = body.get("result", {})
-        if result.get("resultMsg", "FAILURE").upper() != "SUCCESS":    
-            return
+    def _fetch_details(self, ntsl_ordr_no, headers: dict) -> list:
+        try:
+            res = self.http_client.get(
+                "https://www.dhlottery.co.kr/mypage/lottery720select.do",
+                params={"ntslOrdrNo": ntsl_ordr_no},
+                headers=headers
+            )
+            detail_data = res.json()
+            detail_data = detail_data.get("data", detail_data)
+            return [self._format_detail_line(d) for d in detail_data.get("list", [])]
+        except Exception as e:
+            logger.error(f"[Error] Win720 detail error: {e}")
+            return []
+
+    def _format_detail_line(self, d_item: dict) -> dict:
+        try:
+            rank = int(d_item.get("wnRnk") or 0)
+        except (ValueError, TypeError):
+            rank = 0
+        status = f"{rank}등"
+
+        info_cn = d_item.get("ltGmInfoCn", "")
+        if ":" not in info_cn:
+            return {"label": "?", "result": info_cn, "status": status}
+
+        group, number_str = info_cn.split(":", 1)
+        digits = list(number_str)
+        start_hl = len(digits) - self._RANK_HIGHLIGHT_COUNT.get(rank, 0)
+        formatted = " ".join(
+            f"[{d}]" if idx >= start_hl else f" {d} "
+            for idx, d in enumerate(digits)
+        )
+        return {"label": f"{group}조", "result": formatted, "status": status}

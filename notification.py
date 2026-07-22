@@ -25,8 +25,6 @@ class Notification:
         self._send_discord_webhook(webhook_url, message)
 
     def make_lotto_number_message(self, lotto_number: list) -> str:
-        assert type(lotto_number) == list
-
         # parse list without last number 3
         lotto_number = [x[:-1] for x in lotto_number]
         
@@ -68,8 +66,6 @@ class Notification:
         return "\n".join(formatted_numbers)
 
     def send_lotto_winning_message(self, winning: dict, webhook_url: str) -> None:
-        assert type(winning) == dict
-
         balance_str = winning.get('balance', '확인불가')
         try: 
             round = winning["round"]
@@ -115,8 +111,6 @@ class Notification:
             return
 
     def send_win720_winning_message(self, winning: dict, webhook_url: str) -> None:
-        assert type(winning) == dict
-
         balance_str = winning.get('balance', '확인불가')
         try:
             if "win720_details" in winning and winning["win720_details"]:
@@ -154,7 +148,10 @@ class Notification:
             return
 
         payload = { "content": message }
-        requests.post(webhook_url, json=payload)
+        try:
+            requests.post(webhook_url, json=payload, timeout=10)
+        except requests.RequestException as e:
+            print(f"[Warning] Webhook notification failed: {e}")
 
     def _send_telegram(self, message: str) -> None:
         if not self.telegram_token or not self.telegram_chat_id:

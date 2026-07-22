@@ -1,10 +1,6 @@
 import datetime
 import json
 import requests
-import time
-
-from datetime import timedelta
-from enum import Enum
 
 from bs4 import BeautifulSoup as BS
 
@@ -14,12 +10,6 @@ import logging
 from HttpClient import HttpClientSingleton
 
 logger = logging.getLogger(__name__)
-
-class Lotto645Mode(Enum):
-    AUTO = 1
-    MANUAL = 2
-    BUY = 10 
-    CHECK = 20
 
 class Lotto645:
 
@@ -49,31 +39,20 @@ class Lotto645:
         self,
         auth_ctrl: auth.AuthController,
         cnt: int,
-        mode: Lotto645Mode,
         manual_numbers: list = None
     ) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-        assert isinstance(cnt, int) and 1 <= cnt <= 5
-        assert isinstance(mode, Lotto645Mode)
+        if not isinstance(cnt, int) or not 1 <= cnt <= 5:
+            raise ValueError(f"구매 수량(COUNT)은 1~5 사이여야 합니다: {cnt}")
 
-        headers = self._generate_req_headers(auth_ctrl)
+        headers = dict(self._REQ_HEADERS)
 
         requirements = self._getRequirements(headers)
 
-        data = self._generate_body_for_auto_mode(cnt, requirements, manual_numbers)
+        data = self._generate_body(cnt, requirements, manual_numbers)
 
-        body = self._try_buying(headers, data)
+        return self._try_buying(headers, data)
 
-        self._show_result(body)
-        return body
-
-    def _generate_req_headers(self, auth_ctrl: auth.AuthController) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-        return auth_ctrl.add_auth_cred_to_headers(self._REQ_HEADERS)
-
-    def _generate_body_for_auto_mode(self, cnt: int, requirements: list, manual_numbers: list = None) -> dict:
-        assert isinstance(cnt, int) and 1 <= cnt <= 5
-
+    def _generate_body(self, cnt: int, requirements: list, manual_numbers: list = None) -> dict:
         return {
             "round": requirements[3],
             "direct": requirements[0],
@@ -123,24 +102,12 @@ class Lotto645:
         headers["Sec-Fetch-Mode"] = "cors"
         headers["Sec-Fetch-Dest"] = "empty"
 
-        # Retry logic for egovUserReadySocket.json
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                res = self.http_client.post(
-                    url="https://ol.dhlottery.co.kr/olotto/game/egovUserReadySocket.json", 
-                    headers=headers
-                )
-                res.raise_for_status() # Check for HTTP errors
-                break # Success
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"[Retry] ReadySocket connection failed ({attempt+1}/{max_retries}): {e}. Retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    logger.error(f"[Error] ReadySocket connection failed after {max_retries} attempts: {e}")
-                    raise
-        
+        res = self.http_client.post(
+            url="https://ol.dhlottery.co.kr/olotto/game/egovUserReadySocket.json",
+            headers=headers,
+            retries=5
+        )
+
         direct = json.loads(res.text)["ready_ip"]
         
         html_headers = self._REQ_HEADERS.copy()
@@ -217,28 +184,14 @@ class Lotto645:
 
         
     def _try_buying(self, headers: dict, data: dict) -> dict:
-        assert isinstance(headers, dict)
-        assert isinstance(data, dict)
-
         headers["Content-Type"]  = "application/x-www-form-urlencoded; charset=UTF-8"
 
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                res = self.http_client.post(
-                    "https://ol.dhlottery.co.kr/olotto/game/execBuy.do",
-                    headers=headers,
-                    data=data,
-                )
-                res.raise_for_status()
-                break
-            except requests.RequestException as e:
-                if attempt < max_retries - 1:
-                    logger.warning(f"[Retry] execBuy connection failed ({attempt+1}/{max_retries}): {e}. Retrying in 2s...")
-                    time.sleep(2)
-                else:
-                    logger.error(f"[Error] execBuy connection failed after {max_retries} attempts: {e}")
-                    raise
+        res = self.http_client.post(
+            "https://ol.dhlottery.co.kr/olotto/game/execBuy.do",
+            headers=headers,
+            data=data,
+            retries=5
+        )
         if res.encoding == 'ISO-8859-1':
              res.encoding = 'euc-kr'
         
@@ -249,8 +202,6 @@ class Lotto645:
              return json.loads(res.text)
 
     def check_winning(self, auth_ctrl: auth.AuthController) -> dict:
-        assert isinstance(auth_ctrl, auth.AuthController)
-
         headers = self._REQ_HEADERS.copy()
         headers["Referer"] = "https://www.dhlottery.co.kr/mypage/mylotteryledger"
         headers.pop("Content-Type", None)
@@ -378,14 +329,3 @@ class Lotto645:
             raise
 
         return result_data
-    
-
-    def _show_result(self, body: dict) -> None:
-        assert isinstance(body, dict)
-
-        if body.get("loginYn") != "Y":
-            return
-
-        result = body.get("result", {})
-        if result.get("resultMsg", "FAILURE").upper() != "SUCCESS":    
-            return

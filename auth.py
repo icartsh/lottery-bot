@@ -36,8 +36,8 @@ class AuthController:
         self.http_client = HttpClientSingleton.get_instance()
 
     def login(self, user_id: str, password: str):
-        assert isinstance(user_id, str)
-        assert isinstance(password, str)
+        if not user_id or not password:
+            raise ValueError("USERNAME/PASSWORD 환경변수가 설정되지 않았습니다")
 
         max_retries = 5
         for attempt in range(max_retries):
@@ -78,18 +78,6 @@ class AuthController:
                      raise
                 print(f"[Retry] Login failed ({attempt+1}/{max_retries}): {e}. Retrying...")
         
-    def add_auth_cred_to_headers(self, headers: dict) -> str:
-        assert isinstance(headers, dict)
-
-        copied_headers = copy.deepcopy(headers)
-        return copied_headers
-
-    def _get_default_auth_cred(self):
-        res = self.http_client.get(
-            "https://www.dhlottery.co.kr/common.do?method=main"
-        )
-        return self._get_j_session_id_from_response(res)
-
     def _get_rsa_key(self):
         headers = copy.deepcopy(self._REQ_HEADERS)
         headers.update({
@@ -126,21 +114,13 @@ class AuthController:
         return binascii.hexlify(ciphertext).decode('utf-8')
 
     def _get_j_session_id_from_response(self, res: requests.Response):
-        assert isinstance(res, requests.Response)
-
         for cookie in res.cookies:
             if cookie.name == "JSESSIONID":
                 return cookie.value
         
         return self.get_current_session_id()
 
-    def _generate_req_headers(self):
-        return copy.deepcopy(self._REQ_HEADERS)
-
     def _try_login(self, headers: dict, data: dict):
-        assert isinstance(headers, dict)
-        assert isinstance(data, dict)
-        
         res = self.http_client.post(
             "https://www.dhlottery.co.kr/login/securityLoginCheck.do",
             headers=headers,
@@ -192,7 +172,6 @@ class AuthController:
             print(f"[Warning] Password-change postpone failed (ignored): {e}")
 
     def _update_auth_cred(self, j_session_id: str) -> None:
-        assert isinstance(j_session_id, str)
         self._AUTH_CRED = j_session_id
         
         self.http_client.session.cookies.set("JSESSIONID", j_session_id, domain=".dhlottery.co.kr")
