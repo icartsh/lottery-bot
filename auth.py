@@ -151,12 +151,45 @@ class AuthController:
         if new_jsessionid:
              self._update_auth_cred(new_jsessionid)
 
+        # 비밀번호 변경 안내(90일 경과)로 로그인이 변경 페이지로 넘어갔는지 감지
+        if "pswd" in res.url.lower() or "pwdchg" in res.url.lower():
+             print(f"[Warning] Login redirected to password-change page: {res.url}")
+
+        # "다음에 변경하기" 자동 처리 (30일 연장) — 90일 경과 안내로 막히는 것을 예방
+        self._postpone_password_change()
+
         try:
              self.http_client.get("https://www.dhlottery.co.kr/main", headers=self._REQ_HEADERS)
         except Exception as e:
              print(f"[Warning] Failed to check main page after login: {e}")
-             
+
         return res
+
+    def _postpone_password_change(self) -> None:
+        """비밀번호 변경 안내의 '다음에 변경하기' 버튼과 동일한 처리.
+
+        사이트 스크립트(fn_chgPwdLater) 기준: POST /sy/updatePswdChgLate.do 를
+        호출하면 30일간 변경 안내가 연장된다. 실패해도 로그인은 계속 진행한다.
+        """
+        headers = copy.deepcopy(self._REQ_HEADERS)
+        headers.update({
+            "X-Requested-With": "XMLHttpRequest",
+            "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Referer": "https://www.dhlottery.co.kr/main",
+            "Sec-Fetch-Site": "same-origin",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Dest": "empty",
+        })
+        try:
+            res = self.http_client.post(
+                "https://www.dhlottery.co.kr/sy/updatePswdChgLate.do",
+                headers=headers,
+            )
+            data = res.json().get("data") or {}
+            if not data.get("userId"):
+                print(f"[Warning] Password-change postpone returned unexpected body: {res.text[:200]}")
+        except Exception as e:
+            print(f"[Warning] Password-change postpone failed (ignored): {e}")
 
     def _update_auth_cred(self, j_session_id: str) -> None:
         assert isinstance(j_session_id, str)
