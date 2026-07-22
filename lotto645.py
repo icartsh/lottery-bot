@@ -46,24 +46,21 @@ class Lotto645:
         self.http_client = HttpClientSingleton.get_instance()
 
     def buy_lotto645(
-        self, 
-        auth_ctrl: auth.AuthController, 
-        cnt: int, 
-        mode: Lotto645Mode
+        self,
+        auth_ctrl: auth.AuthController,
+        cnt: int,
+        mode: Lotto645Mode,
+        manual_numbers: list = None
     ) -> dict:
         assert isinstance(auth_ctrl, auth.AuthController)
         assert isinstance(cnt, int) and 1 <= cnt <= 5
         assert isinstance(mode, Lotto645Mode)
 
         headers = self._generate_req_headers(auth_ctrl)
-        
+
         requirements = self._getRequirements(headers)
-        
-        data = (
-            self._generate_body_for_auto_mode(cnt, requirements)
-            if mode == Lotto645Mode.AUTO
-            else self._generate_body_for_manual(cnt)
-        )
+
+        data = self._generate_body_for_auto_mode(cnt, requirements, manual_numbers)
 
         body = self._try_buying(headers, data)
 
@@ -74,28 +71,49 @@ class Lotto645:
         assert isinstance(auth_ctrl, auth.AuthController)
         return auth_ctrl.add_auth_cred_to_headers(self._REQ_HEADERS)
 
-    def _generate_body_for_auto_mode(self, cnt: int, requirements: list) -> dict:
+    def _generate_body_for_auto_mode(self, cnt: int, requirements: list, manual_numbers: list = None) -> dict:
         assert isinstance(cnt, int) and 1 <= cnt <= 5
 
         return {
             "round": requirements[3],
-            "direct": requirements[0], 
+            "direct": requirements[0],
             "nBuyAmount": str(1000 * cnt),
-            "param": json.dumps(
-                [
-                    {"genType": "0", "arrGameChoiceNum": None, "alpabet": slot}
-                    for slot in common.SLOTS[:cnt]
-                ]
-            ),
+            "param": json.dumps(self._build_game_param(cnt, manual_numbers)),
             'ROUND_DRAW_DATE' : requirements[1],
             'WAMT_PAY_TLMT_END_DT' : requirements[2],
             "gameCnt": cnt,
             "saleMdaDcd": "10"
         }
 
-    def _generate_body_for_manual(self, cnt: int) -> dict:
-        assert isinstance(cnt, int) and 1 <= cnt <= 5
-        raise NotImplementedError()
+    def _build_game_param(self, cnt: int, manual_numbers: list = None) -> list:
+        """Build the per-game param list sent to execBuy.do.
+
+        Manually picked games take the leading slots (A, B, ...); the rest are
+        auto. Per the game645 page script, genType is
+        "0" = 자동(auto), "1" = 수동(manual), "2" = 반자동(semi-auto).
+        """
+        manual_numbers = manual_numbers or []
+
+        if len(manual_numbers) > cnt:
+            raise ValueError(
+                f"수동 게임({len(manual_numbers)}개)이 구매 수량 COUNT({cnt})보다 많습니다"
+            )
+
+        param = []
+        for i, slot in enumerate(common.SLOTS[:cnt]):
+            if i < len(manual_numbers):
+                param.append({
+                    "genType": "1",
+                    "arrGameChoiceNum": ",".join(str(n) for n in manual_numbers[i]),
+                    "alpabet": slot,
+                })
+            else:
+                param.append({
+                    "genType": "0",
+                    "arrGameChoiceNum": None,
+                    "alpabet": slot,
+                })
+        return param
 
     def _getRequirements(self, headers: dict) -> list:
         headers["Referer"] = "https://ol.dhlottery.co.kr/olotto/game/game645.do"

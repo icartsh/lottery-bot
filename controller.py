@@ -3,6 +3,7 @@ import sys
 from dotenv import load_dotenv
 
 import auth
+import common
 import lotto645
 import win720
 import notification
@@ -35,10 +36,10 @@ def _setup_and_login():
 
     return auth_ctrl, username, webhook_url
 
-def buy_lotto645(authCtrl: auth.AuthController, cnt: int, mode: str):
+def buy_lotto645(authCtrl: auth.AuthController, cnt: int, mode: str, manual_numbers: list = None):
     lotto = lotto645.Lotto645()
     _mode = lotto645.Lotto645Mode[mode.upper()]
-    response = lotto.buy_lotto645(authCtrl, cnt, _mode)
+    response = lotto.buy_lotto645(authCtrl, cnt, _mode, manual_numbers)
     response['balance'] = authCtrl.get_user_balance()
     return response
 
@@ -85,14 +86,15 @@ def check():
     response = check_winning_win720(auth_ctrl)
     send_message(0, 1, response=response, webhook_url=webhook_url)
 
-def buy(): 
-    load_dotenv(override=True) 
+def buy():
+    load_dotenv(override=True)
     count = int(os.environ.get('COUNT'))
     mode = "AUTO"
+    manual_numbers = common.parse_manual_numbers(os.environ.get('MANUAL_NUMBERS'))
 
     auth_ctrl, username, webhook_url = _setup_and_login()
 
-    response = buy_lotto645(auth_ctrl, count, mode) 
+    response = buy_lotto645(auth_ctrl, count, mode, manual_numbers)
     send_message(1, 0, response=response, webhook_url=webhook_url)
 
     time.sleep(10)
@@ -106,10 +108,11 @@ def buy():
 def lotto_buy():
     load_dotenv(override=True)
     count = int(os.environ.get('COUNT'))
+    manual_numbers = common.parse_manual_numbers(os.environ.get('MANUAL_NUMBERS'))
     auth_ctrl, _, discord_webhook_url = _setup_and_login()
     mode = "AUTO"
-    
-    response = buy_lotto645(auth_ctrl, count, mode)
+
+    response = buy_lotto645(auth_ctrl, count, mode, manual_numbers)
     send_message(1, 0, response=response, webhook_url=discord_webhook_url)
 
 def win720_buy():
