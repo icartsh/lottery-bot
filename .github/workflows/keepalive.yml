@@ -1,0 +1,28 @@
+name: Keepalive
+# GitHub silently stops delivering `schedule` events to repositories whose
+# default branch has been idle, and disables scheduled workflows outright after
+# 60 days of inactivity. This job commits a timestamp once a week so the buy and
+# check schedules keep firing.
+on:
+  schedule:
+    - cron: 23 3 * * 4 # every Thursday on 12:23 PM (KST)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  touch:
+    runs-on: [ubuntu-latest]
+    name: Keepalive
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Commit timestamp
+        run: |
+          date -u '+%Y-%m-%dT%H:%M:%SZ' > .github/keepalive
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/keepalive
+          git commit -m "chore: keepalive $(cat .github/keepalive)"
+          git push

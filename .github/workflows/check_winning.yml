@@ -1,7 +1,7 @@
 name: Check Winning
 on:
   schedule:
-    - cron: 0 13 * * 6 # every Saturday on 10:00 PM (KST)
+    - cron: 17 13 * * 6 # every Saturday on 10:17 PM (KST); off the hour to dodge scheduler congestion
   workflow_dispatch:
 
 jobs:
