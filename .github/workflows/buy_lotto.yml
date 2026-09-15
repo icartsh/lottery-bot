@@ -1,7 +1,13 @@
 name: Buy lotto
 on:
   schedule:
-    - cron: 17 10 * * 1 # every Monday on 07:17 PM (KST); off the hour to dodge scheduler congestion
+    # every Monday on 06:17 AM (KST) = Sunday 21:17 UTC.
+    # GitHub `schedule` is best-effort and has been firing 3-11 hours late since
+    # late Aug 2026. dhlottery online sales are open 06:00-24:00 KST only, so the
+    # cron sits at the very start of that window: a delay of up to ~17h40m still
+    # lands inside sales hours instead of after midnight, where the buy fails.
+    # Sunday-night UTC is also a low-load slot compared with Monday 10:17 UTC.
+    - cron: 17 21 * * 0
   workflow_dispatch:
 
 jobs:
